@@ -1,0 +1,114 @@
+stages:
+  - build
+  - deploy
+
+
+variables:
+##GitLab.com Config
+  DOCKER_DRIVER: overlay2
+#  DOCKER_HOST: tcp://docker:2376
+  DOCKER_TLS_CERTDIR: "/certs"
+##SkyTap Config
+  # DOCKER_HOST: tcp://docker:2375
+  # DOCKER_TLS_CERTDIR: ""
+  UCD_COMPONENT_BASE_PATH: "target"
+  UCD_DEPLOY_JSON_PATH: "urbancode"
+  SAST_DEFAULT_ANALYZERS: "nodejs-scan, eslint"
+  DAST_WEBSITE: http://openliberty-review.ibmdevops.com:9081/dev/ # Use the review environment from UrbanCode as the target for scans
+  FF_NETWORK_PER_BUILD: "true" # enable network per build so all services can communicate on the same network
+  DAST_FULL_SCAN_ENABLED: "true" # do a full scan
+  DAST_ZAP_USE_AJAX_SPIDER: "true" # use the ajax spider
+
+
+  CI_APPLICATION_REPOSITORY: "$CI_REGISTRY_IMAGE"
+  CI_APPLICATION_TAG: "REVIEW"
+  CS_PROJECT: 'container-scanning'
+  CS_MAJOR_VERSION: "latest"
+  DOCKER_PASSWORD: $CI_JOB_TOKEN
+  DOCKER_USER: "gitlab-ci-token"
+  DOCKERFILE_PATH: "./backend"
+  DOCKER_INSECURE: "true"
+  FUZZAPI_PROFILE: Quick-10 # how much fuzzing data to push
+  FUZZAPI_OPENAPI: ./backend/schema.json # API scheme definition
+  FUZZAPI_TARGET_URL: http://169.48.27.123:8383 # Use the review environment from UrbanCode as the target for scans
+
+
+build_modresort-ta:
+  stage: build
+  image: maven:3.3.9-jdk-8
+  artifacts:
+    paths:
+      - /builds/gitlab-com/partners/alliance/ibm-red-hat/sandbox/websphere/modresort-ta/target/modresorts-2.0.0.war
+  #only:
+  #  - main
+  script:
+    - echo "Perform build steps for ModResorts"
+    - mvn -v
+    - mvn install:install-file -Dfile=./was-dependency/com.ibm.ws.runtime.jar -DgroupId=com.ibm.websphere -DartifactId=runtime -Dversion=1.0 -Dpackaging=jar
+    - mvn install:install-file -Dfile=./was-dependency/com.ibm.ws.webcontainer.jar -DgroupId=com.ibm.websphere -DartifactId=webcontainer -Dversion=1.0 -Dpackaging=jar
+    - mvn package
+    - echo "Build Completed"
+
+      
+.package_base: &package_base
+  image: docker:stable
+  stage: build
+  services:
+    - name: "docker:19.03.5-dind"
+  before_script:
+    - docker login -u "$CI_REGISTRY_USER" -p "$CI_REGISTRY_PASSWORD" $CI_REGISTRY
+  tags:
+    - docker 
+
+#create_docker_container:
+#  <<: *package_base
+#  stage: build
+#  script:
+#    - docker build -t $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG .
+#    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG
+#    - echo Pushing ${CI_REGISTRY_IMAGE}:${CI_COMMIT_REF_SLUG} to GitLab Container Registry
+#    - echo CI_REGISTRY_IMAGE is ${CI_REGISTRY_IMAGE}
+#    - echo CI_COMMIT_REF_SLUG is ${CI_COMMIT_REF_SLUG}
+#    #
+#    # using quay.io for container registry as an example
+#    #
+#    
+#    - docker build -t quay.io/rslangehennig0/modresort-cp4a:$CI_COMMIT_SHORT_SHA .
+#    - docker tag $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG quay.io/rslangehennig0/modresort-cp4a:$CI_COMMIT_SHORT_SHA
+#    - docker login -u='rslangehennig0' -p='ohVuF8Mdw6MOsp4jT6AEH/+nb7efGiyAPGWcc3Qu5gYDSMpcnnuqUsCwnfoDxqYYhReSXOOXn68TIufLBUrXmg==' quay.io
+#    - docker push quay.io/rslangehennig0/modresort-cp4a:$CI_COMMIT_SHORT_SHA
+#  needs: ["build_modresort-ta"]
+#  tags:
+#    - docker
+#  rules:
+#    - if: '$CI_MERGE_REQUEST_SOURCE_BRANCH_NAME' # Only runs on merge requests when the app code files change
+#      changes:
+#        - src/**/*
+#        - scripts/**/*
+#        - urbancode/**/*
+#      when: always
+#    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' # Always on the master branch
+#      when: always      
+
+
+production_deploy_using_ucd:
+  stage: deploy
+  image: osmanburucuibm/udclient:7.1.2.1
+  script:
+    - echo "Integrating with IBM UrbanCode Deploy..."
+    - udclient -weburl "https://169.62.212.57:8444/" -authtoken "9ec486c6-c7bc-4040-ac1d-f6b6b3e040c7" createVersion -component CP4A-ModResort-GitLab -name $CI_COMMIT_SHORT_SHA --importing true
+    - udclient -weburl "https://169.62.212.57:8444/" -authtoken "9ec486c6-c7bc-4040-ac1d-f6b6b3e040c7" addVersionFiles -component CP4A-ModResort-GitLab -version $CI_COMMIT_SHORT_SHA -base $UCD_COMPONENT_BASE_PATH
+    - udclient -weburl "https://169.62.212.57:8444/" -authtoken "9ec486c6-c7bc-4040-ac1d-f6b6b3e040c7" finishedImporting -component CP4A-ModResort-GitLab -version $CI_COMMIT_SHORT_SHA
+    
+    #
+    # Replace the container-version property value to 1.$CI_PIPELINE_IID
+    #
+    #- cp $UCD_DEPLOY_JSON_PATH/integration-ocp-deploy.json .
+    #- echo $CI_COMMIT_SHORT_SHA
+    #- sed -i "s/VERSION/${CI_COMMIT_SHORT_SHA}/g" integration-ocp-deploy.json
+    #- sed -i "s/CONTAINER-TAG/${CI_COMMIT_REF_SLUG}/g" integration-ocp-deploy.json
+    #- udclient -weburl $UCD_WEB_URL -authtoken $UCD_DEPLOY_TOKEN requestApplicationProcess integration-ocp-deploy.json
+    #- echo "Application is deploying"
+  #environment:
+  #  name: production
+  #  url: http://openliberty-prod.ibmdevops.com:9082/dev/
