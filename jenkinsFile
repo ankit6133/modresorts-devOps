@@ -10,7 +10,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 // Cloning the repository
-                git url: 'https://github.com/rslangehennig-ibm/modresorts-ta.git', branch: 'master'
+                git url: 'https://github.com/rslangehennig-ibm/modresorts-ta.git', branch: 'main'
             }
         }
         stage('Build') {
