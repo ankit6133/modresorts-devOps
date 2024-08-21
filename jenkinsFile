@@ -1,0 +1,36 @@
+pipeline {
+    agent any
+
+    tools {
+        // Reference to Maven installed in Jenkins
+        maven "local_maven"
+    }
+
+    stages {
+        stage('Checkout') {
+            steps {
+                // Cloning the repository
+                git url: 'https://github.com/rslangehennig-ibm/modresorts-ta.git', branch: 'DevOps-Demo'
+            }
+        }
+        stage('Build') {
+            steps {
+                // Clean and package the project using Maven
+                sh "mvn -Dmaven.test.failure.ignore=true clean package"
+            }
+        }
+    }
+
+    post {
+        // Post-build actions
+        success {
+            // Publish test results
+            junit '**/target/surefire-reports/TEST-*.xml'
+            // Archive the WAR file if generated
+            archiveArtifacts artifacts: 'target/*.war', allowEmptyArchive: true
+        }
+        failure {
+            echo "Build failed. Check logs for details."
+        }
+    }
+}
